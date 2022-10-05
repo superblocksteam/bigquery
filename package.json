@@ -1,6 +1,6 @@
 {
   "name": "@superblocksteam/bigquery",
-  "version": "0.2221.0",
+  "version": "0.2223.0",
   "description": "Superblocks BigQuery Plugin",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
