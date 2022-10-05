@@ -13,13 +13,14 @@ import {
 } from '@superblocksteam/shared';
 import {
   ActionConfigurationResolutionContext,
-  BasePlugin,
   PluginExecutionProps,
-  resolveActionConfigurationPropertyUtil
+  DatabasePlugin,
+  resolveActionConfigurationPropertyUtil,
+  CreateConnection
 } from '@superblocksteam/shared-backend';
 import { isEmpty } from 'lodash';
 
-export default class BigqueryPlugin extends BasePlugin {
+export default class BigqueryPlugin extends DatabasePlugin {
   async resolveActionConfigurationProperty({
     context,
     actionConfiguration,
@@ -28,37 +29,48 @@ export default class BigqueryPlugin extends BasePlugin {
     escapeStrings
   }: // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ActionConfigurationResolutionContext): Promise<ResolvedActionConfigurationProperty> {
-    return resolveActionConfigurationPropertyUtil(
-      super.resolveActionConfigurationProperty,
-      {
-        context,
-        actionConfiguration,
-        files,
-        property,
-        escapeStrings
-      },
-      false /* useOrderedParameters */
+    return this.tracer.startActiveSpan(
+      'plugin.resolveActionConfigurationProperty',
+      { attributes: this.getTraceTags(), kind: 1 /* SpanKind.SERVER */ },
+      async (span) => {
+        const resolvedActionConfigurationProperty = resolveActionConfigurationPropertyUtil(
+          super.resolveActionConfigurationProperty,
+          {
+            context,
+            actionConfiguration,
+            files,
+            property,
+            escapeStrings
+          },
+          false /* useOrderedParameters */
+        );
+        span.end();
+        return resolvedActionConfigurationProperty;
+      }
     );
   }
 
-  async execute({
+  public async execute({
     context,
     datasourceConfiguration,
     actionConfiguration
   }: PluginExecutionProps<BigqueryDatasourceConfiguration>): Promise<ExecutionOutput> {
+    const ret = new ExecutionOutput();
+    const options = {
+      query: actionConfiguration.body,
+      params: context.preparedStatementContext
+    };
+    let client: BigQuery;
     try {
-      const ret = new ExecutionOutput();
-      const client = this.createClient(datasourceConfiguration);
-      const options = {
-        query: actionConfiguration.body,
-        params: context.preparedStatementContext
-      };
+      client = await this.createConnection(datasourceConfiguration);
       if (isEmpty(actionConfiguration.body)) {
         return ret;
       }
 
-      const [job] = await client.createQueryJob(options);
-      const [rows] = await job.getQueryResults();
+      const [rows] = await this.executeQuery(async () => {
+        const [job] = await client.createQueryJob(options);
+        return job.getQueryResults();
+      });
 
       ret.output = rows;
       return ret;
@@ -75,27 +87,37 @@ export default class BigqueryPlugin extends BasePlugin {
     return ['body'];
   }
 
-  createClient(datasourceConfiguration: BigqueryDatasourceConfiguration): BigQuery {
+  @CreateConnection
+  private async createConnection(datasourceConfiguration: BigqueryDatasourceConfiguration): Promise<BigQuery> {
     if (!datasourceConfiguration) {
       throw new NotFoundError('No datasource found when creating BigQuery client');
     }
-    const key = datasourceConfiguration.authentication?.custom?.googleServiceAccount?.value ?? '';
-    const credentials = JSON.parse(key);
-    const projectId = credentials['project_id'];
-
-    const opts = { projectId, credentials };
-    return new BigQuery(opts);
+    try {
+      const key = datasourceConfiguration.authentication?.custom?.googleServiceAccount?.value ?? '';
+      const credentials = JSON.parse(key);
+      const projectId = credentials['project_id'];
+      const opts = { projectId, credentials };
+      return new BigQuery(opts);
+    } catch (err) {
+      throw new IntegrationError('Could not parse credentials.');
+    }
   }
 
   async metadata(datasourceConfiguration: BigqueryDatasourceConfiguration): Promise<DatasourceMetadataDto> {
     try {
-      const client = this.createClient(datasourceConfiguration);
-      const [datasets] = await client.getDatasets();
+      const client = await this.createConnection(datasourceConfiguration);
+      const [datasets] = await this.executeQuery(() => {
+        return client.getDatasets();
+      });
       const entities: Table[] = [];
       for (const dataset of datasets) {
-        const [tables] = await dataset.getTables();
+        const [tables] = await this.executeQuery(() => {
+          return dataset.getTables();
+        });
         for (const table of tables) {
-          const tableMetadata = await table.getMetadata();
+          const tableMetadata = await this.executeQuery(() => {
+            return table.getMetadata();
+          });
           const fullTableName = `${tableMetadata[0].tableReference?.datasetId}.${tableMetadata[0].tableReference?.tableId}`;
           const tableEntity: Table = { name: fullTableName, type: TableType.TABLE, columns: [] };
           const fields = tableMetadata[0].schema?.fields;
@@ -117,11 +139,14 @@ export default class BigqueryPlugin extends BasePlugin {
   }
 
   async test(datasourceConfiguration: BigqueryDatasourceConfiguration): Promise<void> {
+    let client;
     try {
-      const client = this.createClient(datasourceConfiguration);
+      client = await this.createConnection(datasourceConfiguration);
       const options = { query: 'SELECT 1' };
-      const [job] = await client.createQueryJob(options);
-      await job.getQueryResults();
+      await this.executeQuery(async () => {
+        const [job] = await client.createQueryJob(options);
+        await job.getQueryResults();
+      });
     } catch (err) {
       throw new IntegrationError(`Test Big Query connection failed, ${err.message}`);
     }
