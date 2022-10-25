@@ -7,47 +7,15 @@ import {
   IntegrationError,
   NotFoundError,
   RawRequest,
-  ResolvedActionConfigurationProperty,
   Table,
   TableType
 } from '@superblocksteam/shared';
-import {
-  ActionConfigurationResolutionContext,
-  PluginExecutionProps,
-  DatabasePlugin,
-  resolveActionConfigurationPropertyUtil,
-  CreateConnection
-} from '@superblocksteam/shared-backend';
+import { PluginExecutionProps, DatabasePlugin, CreateConnection } from '@superblocksteam/shared-backend';
 import { isEmpty } from 'lodash';
 
 export default class BigqueryPlugin extends DatabasePlugin {
-  async resolveActionConfigurationProperty({
-    context,
-    actionConfiguration,
-    files,
-    property,
-    escapeStrings
-  }: // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ActionConfigurationResolutionContext): Promise<ResolvedActionConfigurationProperty> {
-    return this.tracer.startActiveSpan(
-      'plugin.resolveActionConfigurationProperty',
-      { attributes: this.getTraceTags(), kind: 1 /* SpanKind.SERVER */ },
-      async (span) => {
-        const resolvedActionConfigurationProperty = resolveActionConfigurationPropertyUtil(
-          super.resolveActionConfigurationProperty,
-          {
-            context,
-            actionConfiguration,
-            files,
-            property,
-            escapeStrings
-          },
-          false /* useOrderedParameters */
-        );
-        span.end();
-        return resolvedActionConfigurationProperty;
-      }
-    );
+  constructor() {
+    super({ useOrderedParameters: false });
   }
 
   public async execute({
