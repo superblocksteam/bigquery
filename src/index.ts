@@ -14,9 +14,7 @@ import { PluginExecutionProps, DatabasePlugin, CreateConnection } from '@superbl
 import { isEmpty } from 'lodash';
 
 export default class BigqueryPlugin extends DatabasePlugin {
-  constructor() {
-    super({ useOrderedParameters: false });
-  }
+  protected readonly useOrderedParameters = false;
 
   public async execute({
     context,
